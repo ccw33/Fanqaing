@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# Created by .ignore support plugin (hsz.mobi)
-=======
 geckodriver.log
 ghostdriver.log
 
@@ -12,5 +9,4 @@ venv
 
 file/GatherProxy_script.exe
 file/proxy_file
->>>>>>> gitignore
 
