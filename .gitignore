@@ -1,0 +1,16 @@
+<<<<<<< HEAD
+# Created by .ignore support plugin (hsz.mobi)
+=======
+geckodriver.log
+ghostdriver.log
+
+my_demo/geckodriver.log
+
+.idea
+log/*
+venv
+
+
+file/GatherProxy_script.exe
+>>>>>>> gitignore
+
