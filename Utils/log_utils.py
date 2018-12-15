@@ -5,7 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import threading
 import queue
-from conf import Conf
+from Utils.conf import Conf
 
 
 class Log():

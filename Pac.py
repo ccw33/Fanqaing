@@ -12,6 +12,7 @@ from functools import reduce
 import requests
 import time
 # from queue import Queue,Empty
+from bs4 import BeautifulSoup
 import queue
 import threading
 import logging
@@ -21,11 +22,10 @@ from Utils.log_utils import logger
 # from selenium.common import exceptions
 import os
 
-from RPC.RPC_Client import SERVERS,Transformer,MyServerProxy
+from RPC.RPC_Client import SERVERS, Transformer, MyServerProxy
 
 # db_client = Client(SERVERS.DB)
 db_client = MyServerProxy(SERVERS.DB)
-
 
 Git = git_utils.Git()
 # Fanqiang = ip.Fanqiang()
@@ -52,7 +52,6 @@ def generate_replace_text(ip_fanqiang_list):
 
 class FanqiangService():
     # 修改pac文件并commit到github
-
 
     def update_surge_pac(self):
         '''
@@ -112,7 +111,7 @@ class FanqiangService():
         for ip_dict in ip_fanqiang_list:
             q.put(ip_dict)
         for i in range(20):
-            t = threading.Thread(target=self.get_useful_fanqiang_ip_mongo_worker, args=(q,))
+            t = threading.Thread(target=self.__get_useful_fanqiang_ip_mongo_worker, args=(q,))
             t.start()
         q.join()
 
@@ -141,13 +140,99 @@ class FanqiangService():
             q.put(ip_dict)
 
         for i in range(20):
-            t = threading.Thread(target=self.get_useful_fanqiang_ip_gatherproxy_worker, args=(q,))
+            t = threading.Thread(target=self.__get_useful_fanqiang_ip_gatherproxy_worker, args=(q,))
             t.start()
         q.join()
         # 跑完，吧proxy文件删了
         os.remove('file/proxy_file/proxies.txt')
 
-    def get_useful_fanqiang_ip_mongo_worker(self,q):
+    @staticmethod
+    def test_elite(ip_with_port, proxy_type) -> dict or None:
+        '''
+        验证是否匿名
+        :param ip_with_port: 如 '192.155.135.21:466'
+        :param proxy_type: 如 'socks5'
+        :return:
+        '''
+        try:
+            resp = requests.get('https://whoer.net/zh', headers=scribe_utils.headers,
+                                proxies={'http': proxy_type + (
+                                    'h' if proxy_type == 'socks5' else '') + '://' + ip_with_port,
+                                         'https': proxy_type + (
+                                             'h' if proxy_type == 'socks5' else '') + '://' + ip_with_port},
+                                timeout=10)
+            soup = BeautifulSoup(resp.text, 'lxml')
+            tags = soup.select('.your-ip')
+            ip = tags[0].text
+            if not ip:
+                return
+            the_ip = ip_with_port.split(':')[0]
+            if not ip == the_ip:
+                location = FanqiangService.get_location(ip)
+                print("%s匿名，表现地址为：%s" % (the_ip, ip))
+                return {'ip': ip, 'location': location}
+            else:
+                print("%s不匿名" % the_ip)
+                return
+        except (requests.exceptions.ConnectionError, requests.ReadTimeout \
+                        , requests.exceptions.SSLError, scribe_utils.RobotException) as e:
+            print(str(e))
+            return
+
+    @staticmethod
+    def get_location(ip):
+        '''
+        ip定位并返回{'region': '地区：Europa(欧洲)', 'country': '国家：Russia(俄罗斯) ，简称:RU', 'province': '洲／省：Bashkortostan', 'city': '城市：Ufa', 'rect': '经度：56.0456，纬度54.7852', 'timezone': '时区：Asia/Yekaterinburg', 'postcode': '邮编:450068'}
+        :param ip:
+        :return:
+        '''
+        import geoip2.database
+        reader = geoip2.database.Reader('file/GeoLite2-City_20180501/GeoLite2-City.mmdb')
+        ip = ip
+        response = reader.city(ip)
+        # # 有多种语言，我们这里主要输出英文和中文
+        # print("你查询的IP的地理位置是:")
+        #
+        # print("地区：{}({})".format(response.continent.names["es"],
+        #                          response.continent.names["zh-CN"]))
+        #
+        # print("国家：{}({}) ，简称:{}".format(response.country.name,
+        #                                 response.country.names["zh-CN"],
+        #                                 response.country.iso_code))
+        #
+        # print("洲／省：{}({})".format(response.subdivisions.most_specific.name,
+        #                           response.subdivisions.most_specific.names["zh-CN"]))
+        #
+        # print("城市：{}({})".format(response.city.name,
+        #                          response.city.names["zh-CN"]))
+        #
+        # # print("洲／省：{}".format(response.subdivisions.most_specific.name))
+        # #
+        # # print("城市：{}".format(response.city.name))
+        #
+        # print("经度：{}，纬度{}".format(response.location.longitude,
+        #                           response.location.latitude))
+        #
+        # print("时区：{}".format(response.location.time_zone))
+        #
+        # print("邮编:{}".format(response.postal.code))
+
+        data = {
+            'region': "地区：{}({})".format(response.continent.names["es"],
+                                         response.continent.names["zh-CN"]),
+            'country': "国家：{}({}) ，简称:{}".format(response.country.name,
+                                                 response.country.names["zh-CN"],
+                                                 response.country.iso_code),
+            'province': "洲／省：{}".format(response.subdivisions.most_specific.name),
+            'city': "城市：{}".format(response.city.name),
+            'rect': "经度：{}，纬度{}".format(response.location.longitude,
+                                        response.location.latitude),
+            'timezone': "时区：{}".format(response.location.time_zone),
+            'postcode': "邮编:{}".format(response.postal.code)
+        }
+        return data
+
+    def __get_useful_fanqiang_ip_mongo_worker(self, q):
         while not q.empty():
             driver = None
 
@@ -172,7 +257,7 @@ class FanqiangService():
                 #     raise scribe_utils.RobotException()
 
                 # try:
-                #     elite = scribe_utils.test_elite(ip_dict['ip_with_port'], ip_dict['proxy_type'])
+                #     elite = FanqiangService.test_elite(ip_dict['ip_with_port'], ip_dict['proxy_type'])
                 #     if elite:
                 #         Fanqiang.update({'Elite': elite}, {'ip_with_port': ip_dict['ip_with_port']})
                 # except Exception as e:
@@ -215,7 +300,7 @@ class FanqiangService():
             finally:
                 q.task_done()
 
-    def get_useful_fanqiang_ip_gatherproxy_worker(self,q):
+    def __get_useful_fanqiang_ip_gatherproxy_worker(self, q):
         while not q.empty():
             driver = None
             try:
@@ -234,23 +319,27 @@ class FanqiangService():
                 use_time = resp.elapsed.microseconds / math.pow(10, 6)
 
                 logger.debug(ip_with_port + "可用")
-                elite = scribe_utils.test_elite(ip_dict['ip_with_port'], ip_dict['proxy_type'])
+                elite = FanqiangService.test_elite(ip_dict['ip_with_port'], ip_dict['proxy_type'])
                 try:
                     lock.acquire()
                     if elite:
-                        db_client.run(Transformer().Fanqiang().save({'proxy_type': proxy_type, 'ip_with_port': ip_with_port,
-                                       'time': use_time,
-                                       'location': scribe_utils.get_location(ip_with_port.split(':')[0]),
-                                       'Elite': elite}).done())
+                        db_client.run(
+                            Transformer().Fanqiang().save({'proxy_type': proxy_type, 'ip_with_port': ip_with_port,
+                                                           'time': use_time,
+                                                           'location': FanqiangService.get_location(
+                                                               ip_with_port.split(':')[0]),
+                                                           'Elite': elite}).done())
                     else:
-                        db_client.run(Transformer().Fanqiang().save({'proxy_type': proxy_type, 'ip_with_port': ip_with_port,
-                                       'time': use_time,
-                                       'location': scribe_utils.get_location(ip_with_port.split(':')[0])}).done())
+                        db_client.run(
+                            Transformer().Fanqiang().save({'proxy_type': proxy_type, 'ip_with_port': ip_with_port,
+                                                           'time': use_time,
+                                                           'location': FanqiangService.get_location(
+                                                               ip_with_port.split(':')[0])}).done())
                 except Exception as e:
                     logger.info(e)
                 finally:
                     lock.release()
-                    #更新pac
+                    # 更新pac
                     # self.modify_chrome_pac_file_and_push(ip_with_port)
 
             except (requests.exceptions.ConnectionError, requests.ReadTimeout \
@@ -270,11 +359,106 @@ class FanqiangService():
             finally:
                 q.task_done()
 
+    # -------------------------- 这里后面开始才是新版用到的 -------------------------------------
+
+    def __disable_plus_1(self, ip_dict):
+        '''
+        mongodb中相应的数据不可用次数加一
+        :param ip_dict:
+        :return:
+        '''
+        new_disable_times = ip_dict['disable_times'] + 1
+        db_client.run(
+            Transformer().Fanqiang().update({'disable_times': new_disable_times},
+                                            {'_id': ip_dict['_id']}).done())
+
+    def test_useful_fanqiang(self, ip_dict):
+        '''
+        测试该代理能否翻墙（socks5代理）
+        :return:
+        '''
+        try:
+            proxy_type = ip_dict['proxy_type']
+            ip_with_port = ip_dict['ip_with_port']
+            logger.debug("开始测试" + ip_with_port)
+            resp = requests.get('https://www.google.com/', headers=scribe_utils.headers,
+                                proxies={'http': proxy_type + (
+                                    'h' if proxy_type == 'socks5' else '') + '://' + ip_with_port,
+                                         'https': proxy_type + (
+                                             'h' if proxy_type == 'socks5' else '') + '://' + ip_with_port},
+                                timeout=10)
+            logger.debug(ip_with_port + "------------------可用")
+            return True
+        except (scribe_utils.RobotException, \
+                requests.exceptions.ConnectionError, requests.ReadTimeout, requests.exceptions.SSLError) as e:
+            try:
+                self.__disable_plus_1(ip_dict)
+            except Exception as e:
+                logger.info(e)
+            finally:
+                return False
+        except Exception as e:
+            try:
+                self.__disable_plus_1(ip_dict)
+            except Exception as e:
+                logger.info(e)
+            finally:
+                return False
+
+    def get_useful_fanqiang_ip_port_from_mongo(self, n) -> list:
+        '''
+        获取n个能翻墙的ip_dict(从mongo)
+        :param n:
+        :return:
+        '''
+
+        def put_to_chosen_if_useful(ip_port_dict):
+            '''
+            线程调用的函数，如果可用就放进chosen_list里面
+            :param ip_port_dict:
+            :param chosen_list:
+            :return:
+            '''
+            if self.test_useful_fanqiang(ip_port_dict):
+                chosen_list.append(ip_port_dict)
+
+        ip_fanqiang_list = db_client.ip_port_list(Transformer().Fanqiang().query().done())
+        list_len = len(ip_fanqiang_list)
+        chosen_list = []
+        picked_index = []
+        try_times = 0
+        max_try_times = list_len//(n*3)
+        while n-len(chosen_list)>0:#循环是因为不一定一遍就抓完n条可用的
+            try_times+=1
+            threads = []
+            # 获取n条可用的ip_port_dict
+            for i in range(n*3):
+                index = math.floor(random.random() * list_len)
+                while index in picked_index:
+                    index += 1
+                    if index >= list_len - 1:
+                        index = 0
+                picked_index.append(index)
+                # 测试是否可用,可用就自动放进chosen_list
+                t = threading.Thread(target=put_to_chosen_if_useful, args=(ip_fanqiang_list[index],))
+                threads.append(t)
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            if try_times>max_try_times:
+                break
+        return chosen_list[:n]
+
+
+
+
 
 class FileService():
     '''
     专门处理文件读写
     '''
+
     def save_all_from_gatherproxy_to_db(self):
         '''
         保存收集到的所有的gather_proxydoa数据库，不筛选
@@ -292,7 +476,7 @@ class FileService():
 
         def save(ip_with_port, proxy_type):
             try:
-                elite = scribe_utils.test_elite(ip_with_port, proxy_type)
+                elite = FanqiangService.test_elite(ip_with_port, proxy_type)
             except Exception as e:
                 logger.info(str(e))
                 return
@@ -301,11 +485,13 @@ class FileService():
                 lock.acquire()
                 if elite:
                     db_client.run(Transformer().Fanqiang().save({'proxy_type': proxy_type, 'ip_with_port': ip_with_port,
-                                   'time': 0.00, 'location': scribe_utils.get_location(ip_with_port.split(':')[0]),
-                                   'Elite': elite}).done())
+                                                                 'time': 0.00, 'location': FanqiangService.get_location(
+                            ip_with_port.split(':')[0]),
+                                                                 'Elite': elite}).done())
                 else:
                     db_client.run(Transformer().Fanqiang().save({'proxy_type': proxy_type, 'ip_with_port': ip_with_port,
-                                   'time': 0.00, 'location': scribe_utils.get_location(ip_with_port.split(':')[0])}).done())
+                                                                 'time': 0.00, 'location': FanqiangService.get_location(
+                            ip_with_port.split(':')[0])}).done())
             except Exception as e:
                 logger.error(e)
             finally:
@@ -322,7 +508,7 @@ class FileService():
         tf.all_task_done = True
         os.remove('file/proxy_file/proxies.txt')
 
-    def modify_chrome_pac_file_and_push(self,ip_with_port):
+    def modify_chrome_pac_file_and_push(self, ip_with_port):
         '''
         更新pac文件并提交（加锁）
         :param ip_with_port:
@@ -415,14 +601,11 @@ if __name__ == "__main__":
     # fanqiang.update_chrome_pac_by_gatherproxy()
     # fanqiang.update_surge_pac()
 
-    file_service = FileService()
-    file_service.save_all_from_gatherproxy_to_db()
-    logger.debug('DONE!!!')
+    # file_service = FileService()
+    # file_service.save_all_from_gatherproxy_to_db()
+    # logger.debug('DONE!!!')
 
-    # db_client.run(Transformer().Fanqiang().save({'proxy_type': 111, 'ip_with_port': 111,
-    #                                              'time': 0.00,
-    #                                              'location': 111,
-    #                                              'Elite': 111}).done())
-    # db_client.a()
+    # a = db_client.to_list(Transformer().Fanqiang().query().done())
+
+    fanqiang_list = FanqiangService().get_useful_fanqiang_ip_port_from_mongo(7)
     a = 2
-

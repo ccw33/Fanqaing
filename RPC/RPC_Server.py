@@ -25,7 +25,7 @@ class RequestHandler(SimpleXMLRPCRequestHandler):
 import sys
 
 # server = SimpleXMLRPCServer(("0.0.0.0", 9017))
-server = SimpleXMLRPCServer(("0.0.0.0", 9017), requestHandler=RequestHandler,allow_none=True)
+server = SimpleXMLRPCServer(("0.0.0.0", 9080), requestHandler=RequestHandler,allow_none=True)
 server.register_introspection_functions()
 
 
