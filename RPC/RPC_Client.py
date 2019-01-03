@@ -1,12 +1,18 @@
 import json
 import xmlrpc.client
 from xmlrpc.client import MultiCall, Error, _Method,ServerProxy
+
+import functools
+
+import pickle
+
 from Utils.conf import Conf
 from Utils.log_utils import logger
 
 #枚举 rpc server
-class SERVERS:
+class SERVERS_FOR_CLIENT:
     DB='http://{0}:{1}'.format(Conf.get('DB','ip'),Conf.get('DB','port'))
+
 
 
 class MyServerProxy(ServerProxy):
@@ -29,7 +35,7 @@ class Magic:
 
     def __getattr__(self, name):
         '''
-        自动将server.a.b.c转成字符串
+        自动将server.a.A().B().b.c转成字符串
         :param name:
         :return:
         '''
@@ -37,16 +43,20 @@ class Magic:
 
     def __call__(self, *args, **kwargs):
         '''
-        自动将server.A().B()转成字符串
+        见参数提取出来放在list里
         :param args:
         :param kwargs:
         :return:
         '''
-        self.params_list.append({'args': args, 'kwargs': kwargs})
+        self.params_list.append({'args': args , 'kwargs': kwargs})
         return Magic('{0}()'.format(self.attr, ),self.params_list)
 
     def done(self):
-        return self.attr, self.params_list
+        '''
+        返回调用的字符串 server.a.A().B().b.c 和 参数 list(序列化)
+        :return:
+        '''
+        return self.attr, pickle.dumps(self.params_list)
 
     def __str__(self):
         return self.attr
@@ -63,8 +73,8 @@ class Transformer:
 
 
 if __name__=="__main__":
-    server = MyServerProxy(SERVERS.DB)
-    # server = MyServerProxy(SERVERS.DB)
+    server = MyServerProxy(SERVERS_FOR_CLIENT.DB)
+    # server = MyServerProxy(SERVERS_FOR_CLIENT.DB)
     # Print list of available methods
     print(server.system.listMethods())
     # print(server.system.methodHelp())

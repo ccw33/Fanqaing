@@ -9,6 +9,8 @@ import math
 # import pymongo
 import re
 from functools import reduce
+
+import pickle
 import requests
 import time
 # from queue import Queue,Empty
@@ -16,16 +18,17 @@ from bs4 import BeautifulSoup
 import queue
 import threading
 import logging
+
+from RPC.RPC_Client import SERVERS_FOR_CLIENT
 from Utils import scribe_utils, thread_utils, git_utils
 from Utils.log_utils import logger
 # from selenium.webdriver.common.keys import Keys
 # from selenium.common import exceptions
 import os
 
-from RPC.RPC_Client import SERVERS, Transformer, MyServerProxy
+from RPC.RPC_Client import Transformer, MyServerProxy
 
-# db_client = Client(SERVERS.DB)
-db_client = MyServerProxy(SERVERS.DB)
+db_client = MyServerProxy(SERVERS_FOR_CLIENT.DB)
 
 Git = git_utils.Git()
 # Fanqiang = ip.Fanqiang()
@@ -372,6 +375,19 @@ class FanqiangService():
             Transformer().Fanqiang().update({'disable_times': new_disable_times},
                                             {'_id': ip_dict['_id']}).done())
 
+    def __disable_minus_1(self, ip_dict):
+        '''
+        mongodb中相应的数据不可用次数加一
+        :param ip_dict:
+        :return:
+        '''
+        if ip_dict['disable_times']<=0:
+            return
+        new_disable_times = ip_dict['disable_times'] - 1
+        db_client.run(
+            Transformer().Fanqiang().update({'disable_times': new_disable_times},
+                                            {'_id': ip_dict['_id']}).done())
+
     def test_useful_fanqiang(self, ip_dict):
         '''
         测试该代理能否翻墙（socks5代理）
@@ -381,25 +397,36 @@ class FanqiangService():
             proxy_type = ip_dict['proxy_type']
             ip_with_port = ip_dict['ip_with_port']
             logger.debug("开始测试" + ip_with_port)
-            resp = requests.get('https://www.google.com/', headers=scribe_utils.headers,
+            resp = requests.get('https://www.youtube.com/', headers=scribe_utils.headers,
                                 proxies={'http': proxy_type + (
                                     'h' if proxy_type == 'socks5' else '') + '://' + ip_with_port,
                                          'https': proxy_type + (
                                              'h' if proxy_type == 'socks5' else '') + '://' + ip_with_port},
-                                timeout=10)
+                                timeout=2)
             logger.debug(ip_with_port + "------------------可用")
+            use_time = resp.elapsed.microseconds / math.pow(10, 6)
+            ip_dict['time'] = use_time
+            db_client.run(
+                Transformer().Fanqiang().update(ip_dict,{'_id':ip_dict['_id']}).done())
+            self.__disable_minus_1(ip_dict)
             return True
         except (scribe_utils.RobotException, \
                 requests.exceptions.ConnectionError, requests.ReadTimeout, requests.exceptions.SSLError) as e:
             try:
-                self.__disable_plus_1(ip_dict)
+                # if ip_dict['disable_times']>10:
+                #     db_client.run(Transformer().Fanqiang().delete({'_id': ip_dict['_id']}).done())
+                # else:
+                    self.__disable_plus_1(ip_dict)
             except Exception as e:
                 logger.info(e)
             finally:
                 return False
         except Exception as e:
             try:
-                self.__disable_plus_1(ip_dict)
+                # if ip_dict['disable_times']>10:
+                #     db_client.run(Transformer().Fanqiang().delete({'_id': ip_dict['_id']}).done())
+                # else:
+                    self.__disable_plus_1(ip_dict)
             except Exception as e:
                 logger.info(e)
             finally:
@@ -422,7 +449,8 @@ class FanqiangService():
             if self.test_useful_fanqiang(ip_port_dict):
                 chosen_list.append(ip_port_dict)
 
-        ip_fanqiang_list = db_client.ip_port_list(Transformer().Fanqiang().query().done())
+        # ip_fanqiang_list = pickle.loads(db_client.to_list(Transformer().Fanqiang().query({'disable_times':{'$lt':10}}).done()).data)
+        ip_fanqiang_list = pickle.loads(db_client.to_list(Transformer().Fanqiang().query().done()).data)
         list_len = len(ip_fanqiang_list)
         chosen_list = []
         picked_index = []
@@ -448,6 +476,7 @@ class FanqiangService():
                 t.join()
             if try_times>max_try_times:
                 break
+        chosen_list =sorted(chosen_list,key=lambda x:x['time'])
         return chosen_list[:n]
 
 
@@ -604,8 +633,7 @@ if __name__ == "__main__":
     # file_service = FileService()
     # file_service.save_all_from_gatherproxy_to_db()
     # logger.debug('DONE!!!')
-
     # a = db_client.to_list(Transformer().Fanqiang().query().done())
-
+    # b = pickle.loads(a.data)
     fanqiang_list = FanqiangService().get_useful_fanqiang_ip_port_from_mongo(7)
     a = 2
